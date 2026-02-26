@@ -1,6 +1,6 @@
 # Agent Notes for system-performance-monitor
 
-- Backend: FastAPI app in `backend/main.py` with `psutil` sampler thread running every 2 seconds. Only the latest snapshot is kept in `latest_snapshot`, and optionally recorded snapshots accumulate while recording is active.
-- APIs: `GET /metrics`, `POST /record/start`, `POST /record/stop`, and `GET /record/download` (exports CSV with timestamp, CPU, memory, load, disk, network, and top process summaries). `/metrics` also surfaces `recording.active` / `started_at` for the UI.
-- Frontend: React + Vite app under `frontend/` that polls `/metrics` every 2 seconds, keeps a 60-sample history, draws sparkline charts, lists the top CPU processes, and exposes recording controls plus a download button.
-- Running: install Python deps (`pip install -r backend/requirements.txt`), install Node deps in `frontend/`, then run `./start.sh` from the repo root to build the frontend and start the backend on port 7000.
+- Backend: FastAPI service in `backend/main.py`. A single daemon sampler thread polls `psutil` every 1 second, keeps only the latest snapshot, and appends to `recording_buffer` only while recording is active. Metrics include CPU (total + per-core), memory, load averages, disk I/O counters, and network counters.
+- APIs: `GET /metrics` returns the current snapshot plus `recording.active/started_at`. Recording controls are `POST /record/start`, `POST /record/stop`, and `GET /record/download`, which streams CSV rows containing timestamp, CPU total, memory stats, load averages, disk I/O totals, and network I/O totals.
+- Frontend: React + Vite dashboard polls `/metrics` every 2 seconds, keeps a 60-sample rolling history for sparklines, renders widgets for CPU, memory, load average, network I/O, and disk I/O (no process table), and places recording controls (start/stop/download) plus the red indicator/timer in the header.
+- Running: `start.sh` installs npm deps if needed, rebuilds the frontend, and launches `uvicorn` on port 7000 in the background so the terminal remains free while the server follows the terminal session's lifetime.

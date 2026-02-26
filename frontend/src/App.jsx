@@ -33,7 +33,7 @@ const Sparkline = ({ data = [], color = '#53f0ff' }) => {
   const maxValue = Math.max(...data)
   const minValue = Math.min(...data)
   const range = Math.max(maxValue - minValue, 1)
-  const step = data.length > 1 ? (width / (data.length - 1)) : width
+  const step = data.length > 1 ? width / (data.length - 1) : width
 
   const points = data
     .map((value, index) => {
@@ -128,7 +128,7 @@ function App() {
         await fetchMetrics()
       } catch (err) {
         console.error(err)
-        setError('Unable to update recording. Try again in a moment.')
+        setError('Unable to update recording. Try again shortly.')
       }
     },
     [fetchMetrics]
@@ -155,43 +155,97 @@ function App() {
 
   const cpuHistory = useMemo(() => history.map((snapshot) => snapshot?.cpu?.total ?? 0), [history])
   const memoryHistory = useMemo(() => history.map((snapshot) => snapshot?.memory?.percent ?? 0), [history])
+  const loadHistory = useMemo(
+    () => history.map((snapshot) => snapshot?.load_average?.['1'] ?? 0),
+    [history]
+  )
 
-  const latestNetwork = metrics?.network_io
-  const prevNetwork = history.length > 1 ? history[history.length - 2]?.network_io : null
-  const deltaNetwork = useMemo(() => {
-    if (!latestNetwork || !prevNetwork) return { deltaSent: 0, deltaRecv: 0 }
-    return {
-      deltaSent: Math.max(0, latestNetwork.bytes_sent - prevNetwork.bytes_sent),
-      deltaRecv: Math.max(0, latestNetwork.bytes_recv - prevNetwork.bytes_recv),
+  const networkRateHistory = useMemo(() => {
+    const rates = []
+    for (let i = 1; i < history.length; i += 1) {
+      const prev = history[i - 1]?.network_io
+      const current = history[i]?.network_io
+      if (!prev || !current) {
+        continue
+      }
+      const sent = Math.max(0, current.bytes_sent - prev.bytes_sent)
+      const recv = Math.max(0, current.bytes_recv - prev.bytes_recv)
+      rates.push((sent + recv) / 2)
     }
-  }, [latestNetwork, prevNetwork])
+    return rates
+  }, [history])
 
-  const latestDisk = metrics?.disk_io
-  const prevDisk = history.length > 1 ? history[history.length - 2]?.disk_io : null
-  const deltaDisk = useMemo(() => {
-    if (!latestDisk || !prevDisk) return { deltaRead: 0, deltaWrite: 0 }
-    return {
-      deltaRead: Math.max(0, latestDisk.read_bytes - prevDisk.read_bytes),
-      deltaWrite: Math.max(0, latestDisk.write_bytes - prevDisk.write_bytes),
+  const diskRateHistory = useMemo(() => {
+    const rates = []
+    for (let i = 1; i < history.length; i += 1) {
+      const prev = history[i - 1]?.disk_io
+      const current = history[i]?.disk_io
+      if (!prev || !current) {
+        continue
+      }
+      const read = Math.max(0, current.read_bytes - prev.read_bytes)
+      const write = Math.max(0, current.write_bytes - prev.write_bytes)
+      rates.push((read + write) / 2)
     }
-  }, [latestDisk, prevDisk])
+    return rates
+  }, [history])
 
-  const sparklineColor = '#7dd3fc'
-  const memorySpark = '#a855f7'
+  const latestNetworkDelta = useMemo(() => {
+    if (history.length < 2) {
+      return { deltaSent: 0, deltaRecv: 0 }
+    }
+    const prev = history[history.length - 2]?.network_io
+    const current = history[history.length - 1]?.network_io
+    if (!prev || !current) {
+      return { deltaSent: 0, deltaRecv: 0 }
+    }
+    return {
+      deltaSent: Math.max(0, current.bytes_sent - prev.bytes_sent),
+      deltaRecv: Math.max(0, current.bytes_recv - prev.bytes_recv),
+    }
+  }, [history])
+
+  const latestDiskDelta = useMemo(() => {
+    if (history.length < 2) {
+      return { deltaRead: 0, deltaWrite: 0 }
+    }
+    const prev = history[history.length - 2]?.disk_io
+    const current = history[history.length - 1]?.disk_io
+    if (!prev || !current) {
+      return { deltaRead: 0, deltaWrite: 0 }
+    }
+    return {
+      deltaRead: Math.max(0, current.read_bytes - prev.read_bytes),
+      deltaWrite: Math.max(0, current.write_bytes - prev.write_bytes),
+    }
+  }, [history])
+
+  const formattedTimestamp = metrics?.timestamp ? new Date(metrics.timestamp).toLocaleTimeString() : ''
 
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div>
-          <p className="eyebrow">Live System Telemetry</p>
+        <div className="header-text">
+          <p className="eyebrow">System Monitor</p>
           <h1>System Performance Monitor</h1>
-          <p className="subtitle">Futuristic telemetry with responsive sampling, neon polish, and zero WebSocket debt.</p>
+          <p className="subtitle">Clean, lightweight telemetry with responsive polling.</p>
         </div>
-        <div className={`recording-indicator ${recordingMeta.active ? 'active' : ''}`}>
-          <span className="indicator-dot" />
-          <div>
-            <p>{recordingMeta.active ? 'Recording live' : 'Idle'}</p>
-            <p>{formatDuration(timerSeconds)}</p>
+        <div className="header-actions">
+          <div className={`recording-indicator ${recordingMeta.active ? 'active' : ''}`}>
+            <span className="indicator-dot" />
+            <div>
+              <p>{recordingMeta.active ? 'Recording live' : 'Ready'}</p>
+              <p>{formatDuration(timerSeconds)}</p>
+            </div>
+          </div>
+          <div className="button-row">
+            <button onClick={() => handleRecord('start')} disabled={recordingMeta.active}>
+              Start
+            </button>
+            <button onClick={() => handleRecord('stop')} disabled={!recordingMeta.active}>
+              Stop
+            </button>
+            <button onClick={handleDownload}>Download CSV</button>
           </div>
         </div>
       </header>
@@ -205,9 +259,9 @@ function App() {
               <p className="widget-label">CPU</p>
               <p className="widget-value">{metrics ? `${metrics.cpu.total}%` : '--'}</p>
             </div>
-            <span className="widget-kicker">{metrics?.timestamp ? new Date(metrics.timestamp).toLocaleTimeString() : ''}</span>
+            <span className="widget-kicker">{formattedTimestamp}</span>
           </div>
-          <Sparkline data={cpuHistory} color={sparklineColor} />
+          <Sparkline data={cpuHistory} color="#7dd3fc" />
           <div className="core-grid">
             {metrics?.cpu?.per_core?.map((value, index) => {
               const safeValue = typeof value === 'number' ? value : 0
@@ -216,7 +270,7 @@ function App() {
                 <div key={index} className="core-pill">
                   <div className="core-bar">
                     <div className="core-fill" style={{ height: `${bounded}%` }} />
-                    <span className="core-value">{bounded}%</span>
+                    <span>{bounded}%</span>
                   </div>
                   <span className="core-label">Core {index + 1}</span>
                 </div>
@@ -231,9 +285,11 @@ function App() {
               <p className="widget-label">Memory</p>
               <p className="widget-value">{metrics ? `${metrics.memory.percent}%` : '--'}</p>
             </div>
-            <span className="widget-kicker">{metrics ? formatBytes(metrics.memory.used) : ''} / {metrics ? formatBytes(metrics.memory.total) : ''}</span>
+            <span className="widget-kicker">
+              {metrics ? `${formatBytes(metrics.memory.used)} / ${formatBytes(metrics.memory.total)}` : ''}
+            </span>
           </div>
-          <Sparkline data={memoryHistory} color={memorySpark} />
+          <Sparkline data={memoryHistory} color="#a855f7" />
           <div className="memory-bar">
             <div className="memory-fill" style={{ width: metrics ? `${metrics.memory.percent}%` : '0%' }} />
           </div>
@@ -243,14 +299,16 @@ function App() {
           <div className="widget-heading">
             <div>
               <p className="widget-label">Load Average</p>
-              <p className="widget-value">{metrics ? 'system' : '--'}</p>
+              <p className="widget-value">{metrics?.load_average?.['1'] ?? '--'}</p>
             </div>
+            <span className="widget-kicker">1m</span>
           </div>
+          <Sparkline data={loadHistory} color="#38bdf8" />
           <div className="load-grid">
             {['1', '5', '15'].map((field) => (
               <div key={field} className="load-cell">
-                <span>{field}m</span>
-                <strong>{metrics?.load_average?.[field] ?? '--'}</strong>
+                <span className="load-label">{field}m</span>
+                <strong className="load-value">{metrics?.load_average?.[field] ?? '--'}</strong>
               </div>
             ))}
           </div>
@@ -259,19 +317,20 @@ function App() {
         <article className="widget">
           <div className="widget-heading">
             <div>
-              <p className="widget-label">Network</p>
-              <p className="widget-value">{metrics ? `${formatBytes(deltaNetwork.deltaSent)}/2s ↑` : '--'}</p>
+              <p className="widget-label">Network I/O</p>
+              <p className="widget-value">{formatBytes(latestNetworkDelta.deltaSent)}/s</p>
             </div>
-            <span className="widget-kicker">{metrics ? `${formatBytes(deltaNetwork.deltaRecv)}/2s ↓` : ''}</span>
+            <span className="widget-kicker">{formatBytes(latestNetworkDelta.deltaRecv)}/s</span>
           </div>
+          <Sparkline data={networkRateHistory} color="#22c55e" />
           <div className="io-grid">
-            <div>
+            <div className="io-tile">
               <p>Sent</p>
-              <strong>{metrics ? formatBytes(metrics.network_io.bytes_sent) : '--'}</strong>
+              <strong>{formattedTimestamp ? formatBytes(metrics?.network_io?.bytes_sent ?? 0) : '--'}</strong>
             </div>
-            <div>
+            <div className="io-tile">
               <p>Recv</p>
-              <strong>{metrics ? formatBytes(metrics.network_io.bytes_recv) : '--'}</strong>
+              <strong>{formattedTimestamp ? formatBytes(metrics?.network_io?.bytes_recv ?? 0) : '--'}</strong>
             </div>
           </div>
         </article>
@@ -280,74 +339,22 @@ function App() {
           <div className="widget-heading">
             <div>
               <p className="widget-label">Disk I/O</p>
-              <p className="widget-value">{metrics ? `${formatBytes(deltaDisk.deltaRead)}/2s ↗` : '--'}</p>
+              <p className="widget-value">{formatBytes(latestDiskDelta.deltaRead)}/s</p>
             </div>
-            <span className="widget-kicker">{metrics ? `${formatBytes(deltaDisk.deltaWrite)}/2s ↘` : ''}</span>
+            <span className="widget-kicker">{formatBytes(latestDiskDelta.deltaWrite)}/s</span>
           </div>
+          <Sparkline data={diskRateHistory} color="#fb7185" />
           <div className="io-grid">
-            <div>
+            <div className="io-tile">
               <p>Read</p>
-              <strong>{metrics ? formatBytes(metrics.disk_io.read_bytes) : '--'}</strong>
+              <strong>{formattedTimestamp ? formatBytes(metrics?.disk_io?.read_bytes ?? 0) : '--'}</strong>
             </div>
-            <div>
+            <div className="io-tile">
               <p>Write</p>
-              <strong>{metrics ? formatBytes(metrics.disk_io.write_bytes) : '--'}</strong>
+              <strong>{formattedTimestamp ? formatBytes(metrics?.disk_io?.write_bytes ?? 0) : '--'}</strong>
             </div>
           </div>
         </article>
-      </section>
-
-      <section className="process-section">
-        <div className="section-header">
-          <h2>Top Processes (by CPU)</h2>
-          <p>Updated every two seconds with the latest snapshot.</p>
-        </div>
-        <div className="table-shell">
-          <table>
-            <thead>
-              <tr>
-                <th>Process</th>
-                <th>CPU %</th>
-                <th>Memory %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {metrics?.top_processes?.map((process) => (
-                <tr key={`${process.pid}-${process.cpu_percent}`}>
-                  <td>
-                    <span className="process-name">{process.name}</span>
-                    <span className="process-pid">PID {process.pid}</span>
-                  </td>
-                  <td>{process.cpu_percent}%</td>
-                  <td>{process.memory_percent}%</td>
-                </tr>
-              ))}
-              {!metrics?.top_processes?.length && (
-                <tr>
-                  <td colSpan={3} className="empty-row">
-                    Capturing process data...
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="recording-controls">
-        <div>
-          <p className="widget-label">Recording Controls</p>
-          <p>Start or stop the sampling buffer and export CSV snapshots.</p>
-        </div>
-        <div className="button-row">
-          <button onClick={() => handleRecord('start')} disabled={recordingMeta.active}>
-            Start
-          </button>
-          <button onClick={() => handleRecord('stop')} disabled={!recordingMeta.active}>
-            Stop
-          </button>
-          <button onClick={handleDownload}>Download CSV</button>
-        </div>
       </section>
     </div>
   )

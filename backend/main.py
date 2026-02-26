@@ -26,6 +26,16 @@ sampler_thread: Optional[threading.Thread] = None
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
+def _safe_round(value: Optional[float], places: int = 1) -> Optional[float]:
+    if value is None:
+        return None
+    return round(value, places)
+
+
+def _coalesce(value: Optional[Any], default: Any = "") -> Any:
+    return default if value is None else value
+
+
 def _collect_snapshot() -> Dict[str, Any]:
     timestamp = datetime.utcnow().isoformat() + "Z"
 
@@ -42,57 +52,36 @@ def _collect_snapshot() -> Dict[str, Any]:
     disk = psutil.disk_io_counters()
     net = psutil.net_io_counters()
 
-    processes: List[Dict[str, Any]] = []
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
-        try:
-            cpu_percent = proc.cpu_percent(interval=None)
-            info = proc.info
-            info["cpu_percent"] = cpu_percent
-            info["memory_percent"] = info.get("memory_percent", 0.0)
-            processes.append(
-                {
-                    "pid": info.get("pid"),
-                    "name": info.get("name") or "unknown",
-                    "cpu_percent": round(info.get("cpu_percent", 0.0), 1),
-                    "memory_percent": round(info.get("memory_percent", 0.0), 1),
-                }
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-    processes = sorted(processes, key=lambda p: p["cpu_percent"], reverse=True)[:10]
-
     snapshot = {
         "timestamp": timestamp,
         "cpu": {
-            "total": round(total_cpu, 1),
+            "total": _safe_round(total_cpu),
             "per_core": [round(core, 1) for core in per_core],
         },
         "memory": {
             "total": memory.total,
             "used": memory.used,
-            "percent": round(memory.percent, 1),
+            "percent": _safe_round(memory.percent),
         },
         "load_average": {
-            "1": round(load1, 2) if load1 is not None else None,
-            "5": round(load5, 2) if load5 is not None else None,
-            "15": round(load15, 2) if load15 is not None else None,
+            "1": _safe_round(load1, 2),
+            "5": _safe_round(load5, 2),
+            "15": _safe_round(load15, 2),
         },
         "disk_io": {
-            "read_bytes": disk.read_bytes,
-            "write_bytes": disk.write_bytes,
-            "read_count": disk.read_count,
-            "write_count": disk.write_count,
+            "read_bytes": disk.read_bytes if disk else 0,
+            "write_bytes": disk.write_bytes if disk else 0,
+            "read_count": disk.read_count if disk else 0,
+            "write_count": disk.write_count if disk else 0,
         },
         "network_io": {
-            "bytes_sent": net.bytes_sent,
-            "bytes_recv": net.bytes_recv,
-            "packets_sent": net.packets_sent,
-            "packets_recv": net.packets_recv,
-            "errin": net.errin,
-            "errout": net.errout,
+            "bytes_sent": net.bytes_sent if net else 0,
+            "bytes_recv": net.bytes_recv if net else 0,
+            "packets_sent": net.packets_sent if net else 0,
+            "packets_recv": net.packets_recv if net else 0,
+            "errin": net.errin if net else 0,
+            "errout": net.errout if net else 0,
         },
-        "top_processes": processes,
     }
 
     return snapshot
@@ -107,7 +96,7 @@ def _sampler_loop() -> None:
         with recording_lock:
             if recording_active:
                 recording_buffer.append(snapshot)
-        time.sleep(2)
+        time.sleep(1)
 
 
 def _ensure_sampler() -> None:
@@ -195,14 +184,10 @@ def download_recording() -> StreamingResponse:
         "disk_write_bytes",
         "network_bytes_sent",
         "network_bytes_recv",
-        "top_processes",
     ]
     writer.writerow(header)
 
     for sample in data:
-        top_proc_str = ";".join(
-            f"{proc['name']}({proc['pid']}):{proc['cpu_percent']}%" for proc in sample.get("top_processes", [])
-        )
         writer.writerow(
             [
                 sample["timestamp"],
@@ -210,14 +195,13 @@ def download_recording() -> StreamingResponse:
                 sample["memory"]["used"],
                 sample["memory"]["total"],
                 sample["memory"]["percent"],
-                sample["load_average"]["1"],
-                sample["load_average"]["5"],
-                sample["load_average"]["15"],
+                _coalesce(sample["load_average"]["1"]),
+                _coalesce(sample["load_average"]["5"]),
+                _coalesce(sample["load_average"]["15"]),
                 sample["disk_io"]["read_bytes"],
                 sample["disk_io"]["write_bytes"],
                 sample["network_io"]["bytes_sent"],
                 sample["network_io"]["bytes_recv"],
-                top_proc_str,
             ]
         )
 

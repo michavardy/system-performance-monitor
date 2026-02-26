@@ -1,52 +1,46 @@
 # System Performance Monitor
 
-A lightweight FastAPI + React dashboard that samples host performance every two seconds, exposes the latest snapshot over a REST API, and renders a neon telemetry experience.
+A lean FastAPI backend with a polished React/Vite dashboard that polls system metrics every two seconds, keeps only the latest snapshot in memory, and exposes recording controls with CSV export. The UI runs from the same server, keeps a rolling history for charts, and displays clean widgets for CPU, memory, load average, network I/O, and disk I/O.
 
 ## Features
 
-- FastAPI backend with a single background sampler thread powered by `psutil`
-- Live metrics at `GET /metrics`, recording controls under `/record/*`, and CSV export
-- React + Vite dashboard with animated widgets, sparkline charts, and a top CPU table
-- Recording indicator, start/stop controls, and CSV download button
-- Start-up script (`start.sh`) that builds the frontend and launches the backend on port `7000`
+- FastAPI backend with a single daemon sampler thread that polls `psutil` every 1 second and keeps the latest snapshot plus an optional recording buffer
+- `GET /metrics` returns the current snapshot plus recording status, while `/record/start`, `/record/stop`, and `/record/download` control and export recordings as CSV
+- React + Vite dashboard polls `/metrics` every 2 seconds, maintains a 60-s history, renders sparkline graphs for CPU, memory, load, network, and disk, and shows a recording indicator with start/stop/download buttons in the header
+- `start.sh` installs frontend dependencies (when needed), builds the Vite bundle, and launches the backend on port `7000` in the background so the terminal remains available; the process stops automatically if the terminal exits
 
-## Architecture
+## Layout
 
 ```
 system-performance-monitor/
-├── backend/       # FastAPI app with sampling thread and recording API
-├── frontend/      # Vite + React dashboard polling the backend
-├── start.sh       # Builds frontend assets (if needed) and runs uvicorn
+├── backend/       # FastAPI service, sampler thread, recording endpoints, and static file server
+├── frontend/      # React/Vite dashboard that polls the backend
+├── start.sh       # Builds the frontend and runs uvicorn in the background on port 7000
 └── README.md
 ```
 
-The backend keeps only the latest snapshot in memory, samples CPU/memory/load/disk/network data every 2 seconds, and appends snapshots to an in-memory buffer while recording. The React frontend polls `/metrics` every 2 seconds, keeps a rolling 60-sample history, renders CPU/memory sparklines, shows top processes, and lets you control recordings.
-
 ## Getting Started
 
-1. Install backend dependencies:
+1. Install Python dependencies:
    ```bash
    pip install -r backend/requirements.txt
    ```
-2. Install frontend dependencies:
-   ```bash
-   cd frontend && npm install
-   ```
-3. Start the app (builds the frontend and launches uvicorn on port 7000):
+
+2. Run the bundled script (it will install npm deps if needed, rebuild the frontend, and start the backend in the background):
    ```bash
    ./start.sh
    ```
-4. Open [http://localhost:7000](http://localhost:7000) to view the dashboard.
 
-## Recording Controls
+3. Visit [http://localhost:7000](http://localhost:7000) to view the dashboard. The process runs in the background and stops automatically when the terminal session ends.
 
-- `POST /record/start` — begins capturing snapshots into an in-memory buffer
-- `POST /record/stop` — stops the current recording
-- `GET /record/download` — streams a CSV with timestamp, CPU, memory, load, disk, network, and top process summaries
+## API Endpoints
 
-The UI displays a pulsing red indicator and timer while recording, and the Download button retrieves the latest buffer as a CSV.
+- `GET /metrics` — returns the latest metrics snapshot including CPU, memory, load averages, disk I/O, network I/O, and recording status
+- `POST /record/start` — begins capturing each sampled snapshot into an in-memory buffer
+- `POST /record/stop` — stops the current recording session
+- `GET /record/download` — streams a CSV that includes timestamp, CPU total, memory stats, load averages, disk counters, and network counters
 
-## Additional Notes
+## Notes
 
-- The backend serves the built React assets from `frontend/dist`. Rebuild them whenever the UI changes using `npm run build` in the `frontend` directory or by rerunning `start.sh`.
-- The sampler thread avoids per-request `psutil` calls so the API stays responsive while overhead remains minimal.
+- The backend serves the built React assets from `frontend/dist`. Rebuild either by rerunning `start.sh` or manually running `npm run build` inside `frontend` after edits.
+- Because the sampler thread keeps only the latest snapshot, the API remains lightweight and responsive while the UI relies solely on polling (no WebSockets).
